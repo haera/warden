@@ -19,7 +19,6 @@ public:
 public:
 	ULONG64 getProcessId(const char* processName);
 	ULONG64 getModuleBaseAddress(const char* moduleName);
-	std::string ReadString(uintptr_t address, size_t max_length);
 	bool GetBaseAddresses(uintptr_t& baseClient, uintptr_t& baseEngine);
 
 	template<typename T>
@@ -39,14 +38,14 @@ T Memory::Read(UINT_PTR readAddress)
 	T response{};
 	MEMORY_STRUCT instructions = { 0 };
 	instructions.type = 3;
-	instructions.magic = 0x1337;
+	instructions.magic = 0xBEEF;
 	instructions.usermode_pid = usermode_pid;
 	instructions.target_pid = processId;
 	instructions.address = reinterpret_cast<void*>(readAddress);
 	instructions.size = sizeof(T);
 	instructions.output = &response;
 
-	Driver::callHook(&instructions);
+	Driver::call_hook(&instructions);
 
 	return response;
 }
@@ -56,14 +55,14 @@ bool Memory::Write(uint64_t writeAddress, T buffer)
 {
 	MEMORY_STRUCT instructions = { 0 };
 	instructions.type = 4;
-	instructions.magic = 0x1337;
+	instructions.magic = 0xBEEF;
 	instructions.usermode_pid = usermode_pid;
 	instructions.target_pid = processId;
 	instructions.address = reinterpret_cast<void*>(writeAddress);
 	instructions.size = sizeof(T);
 	instructions.output = &buffer;
 
-	Driver::callHook(&instructions);
+	Driver::call_hook(&instructions);
 
 	return true;
 }
@@ -72,12 +71,12 @@ bool Memory::Write(uint64_t writeAddress, T buffer)
 void Memory::ReadRaw(uintptr_t address, void* buffer, size_t size) {
 	MEMORY_STRUCT instructions = { 0 };
 	instructions.type = 3;
-	instructions.magic = 0x1337;
+	instructions.magic = 0xBEEF;
 	instructions.usermode_pid = usermode_pid;
 	instructions.target_pid = processId;
 	instructions.address = reinterpret_cast<void*>(address);
 	instructions.size = static_cast<LONG>(size);
 	instructions.output = buffer;
 
-	Driver::callHook(&instructions);
+	Driver::call_hook(&instructions);
 }

@@ -10,7 +10,7 @@
 #define ThreadListHead 0x5E0 // EPROCESS::ThreadListHead
 #define ActiveProcessLinks 0x448 // EPROCESS::ActiveProcessLinks
 
-#define DebugPrint(...) DbgPrintEx( DPFLTR_SYSTEM_ID, DPFLTR_ERROR_LEVEL, "?" __VA_ARGS__ )
+#define DebugPrint(...) DbgPrintEx( DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "?" __VA_ARGS__ )
 
 typedef enum _SYSTEM_INFORMATION_CLASS
 {
@@ -338,4 +338,4 @@ typedef struct _MEMORY_STRUCT
 	LONG size;
 	void* output;
 	ULONG magic;
-}MEMORY_STRUCT;
+} MEMORY_STRUCT;

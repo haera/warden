@@ -29,7 +29,26 @@ void Initialize()
 
 	mem = std::make_shared<Memory>();
 
+	// gadget logic
+	okay("enter qword addr of kernel routine:");
+	uintptr_t routine;
+	scanf("%lx", &routine);
+	Driver::resolve_gadget(routine);
+
 	okay("warden loaded successfully.");
+}
+
+void Load()
+{
+	MEMORY_STRUCT* comm = new MEMORY_STRUCT{ 0 };
+	comm->type = 1;
+	comm->magic = 0x1337;
+	comm->usermode_pid = GetCurrentProcessId();
+
+	m_driver_control = Driver::call_hook(comm);
+
+	if (comm)
+		printf("comm->output: %x", comm->output);
 }
 
 int main() 
@@ -37,6 +56,8 @@ int main()
 	info("warden loading...");
 
 	Initialize();
+
+	Load();
 
 	return 0;
 }

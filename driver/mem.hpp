@@ -1,42 +1,47 @@
 #pragma once
 #include "imports.hpp"
 
+#define RVA(addr, size) ((PBYTE)(addr + *(DWORD*)(addr + ((size) - 4)) + size))
+
 namespace mem
 {
-	PVOID GetSystemBaseModule(const char* module_name)
+	uintptr_t get_system_module_base(const char* module_name)
 	{
-		ULONG bytes = 0;
-		NTSTATUS status = ZwQuerySystemInformation(SystemModuleInformation, 0, bytes, &bytes);
+		ULONG size = 0;
+		ZwQuerySystemInformation(SystemModuleInformation, nullptr, 0, &size);
+		if (!size)
+			return 0;
 
-		if (!bytes) return 0;
+		PVOID buffer = ExAllocatePool(NonPagedPool, size);
+		if (!buffer)
+			return 0;
 
-		PRTL_PROCESS_MODULES modules = (PRTL_PROCESS_MODULES)ExAllocatePoolWithTag(NonPagedPool, bytes, 0x504D5448);
-
-		status = ZwQuerySystemInformation(SystemModuleInformation, modules, bytes, &bytes);
-
-		if (!NT_SUCCESS(status)) return 0;
-
-		PRTL_PROCESS_MODULE_INFORMATION module = modules->Modules;
-		PVOID module_base = 0, module_size = 0;
-
-		for (ULONG i = 0; i < modules->NumberOfModules; i++)
+		if (!NT_SUCCESS(ZwQuerySystemInformation(SystemModuleInformation, buffer, size, &size))) 
 		{
-			if (strcmp((char*)module[i].FullPathName, module_name) == 0)
+			ExFreePoolWithTag(buffer, 0);
+			return 0;
+		}
+
+		PRTL_PROCESS_MODULES modules = (PRTL_PROCESS_MODULES)buffer;
+		uintptr_t base = 0;
+
+		for (ULONG i = 0; i < modules->NumberOfModules; ++i) 
+		{
+			const char* name = (const char*)(modules->Modules[i].FullPathName + modules->Modules[i].OffsetToFileName);
+			if (_stricmp(name, module_name) == 0) 
 			{
-				module_base = module[i].ImageBase;
-				module_size = (PVOID)module[i].ImageSize;
+				base = (uintptr_t)modules->Modules[i].ImageBase;
 				break;
 			}
 		}
 
-		if (modules) ExFreePoolWithTag(modules, 0);
-		if (!module_base) return 0;
-		return module_base;
+		ExFreePoolWithTag(buffer, 'ldmB');
+		return base;
 	}
 
 	PVOID GetSystemBaseModuleExport(const char* module_name, LPCSTR routine_name)
 	{
-		PVOID base_module = mem::GetSystemBaseModule(module_name);
+		PVOID base_module = (PVOID)mem::get_system_module_base(module_name);
 		if (!base_module) return NULL;
 		return RtlFindExportedRoutineByName(base_module, routine_name);
 	}
@@ -212,4 +217,75 @@ namespace mem
 
 		return process_id;
 	}
+
+	uintptr_t sig_scan(const char* signature, const uintptr_t base)
+	{
+		if (!base || !signature)
+			return 0;
+
+		// Parse pattern like "48 8B ?? ?? ?? 89"
+		auto pattern_to_bytes = [](const char* pattern, unsigned char* bytes, char* mask, SIZE_T& out_len) noexcept
+		{
+			SIZE_T i = 0;
+			while (*pattern && i < 256)
+			{
+				if (*pattern == ' ')
+				{
+					++pattern;
+					continue;
+				}
+
+				if (*pattern == '?')
+				{
+					++pattern;
+					if (*pattern == '?') ++pattern;
+					bytes[i] = 0;
+					mask[i] = '?';
+				}
+				else
+				{
+					ULONG val = 0;
+					char temp[3] = { pattern[0], pattern[1], 0 };
+					RtlCharToInteger(temp, 16, &val);
+					bytes[i] = static_cast<unsigned char>(val);
+					mask[i] = 'x';
+					pattern += 2;
+				}
+
+				++i;
+			}
+			out_len = i;
+		};
+
+		unsigned char sig_bytes[256];
+		char sig_mask[256];
+		SIZE_T sig_len = 0;
+		pattern_to_bytes(signature, sig_bytes, sig_mask, sig_len);
+
+		if (!sig_len)
+			return 0;
+
+		// No PE parsing: naive full scan of 2MB range
+		auto* region = reinterpret_cast<unsigned char*>(base);
+		const SIZE_T scan_size = 0x200000; // 2MB max
+
+		for (SIZE_T i = 0; i < scan_size - sig_len; ++i)
+		{
+			bool matched = true;
+			for (SIZE_T j = 0; j < sig_len; ++j)
+			{
+				if (sig_mask[j] == 'x' && region[i + j] != sig_bytes[j])
+				{
+					matched = false;
+					break;
+				}
+			}
+
+			if (matched)
+				return reinterpret_cast<uintptr_t>(&region[i]);
+		}
+
+		return 0;
+	}
+
 }

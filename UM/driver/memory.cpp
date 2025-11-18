@@ -9,11 +9,11 @@ ULONG64 Memory::getProcessId(const char* processName)
 {
 	MEMORY_STRUCT instructions = { 0 };
 	instructions.type = 5;
-	instructions.magic = 0x1337;
+	instructions.magic = 0xBEEF;
 	// we're using module_name in lieu of the process_name for now (const char*)
 	instructions.module_name = processName;
 
-	Driver::callHook(&instructions);
+	Driver::call_hook(&instructions);
 
 	// also using m->base_address for pID.. (ULONG64)
 	ULONG64 pID = instructions.base_address;
@@ -27,26 +27,13 @@ ULONG64 Memory::getModuleBaseAddress(const char* moduleName)
 {
 	MEMORY_STRUCT instructions = { 0 };
 	instructions.type = 6;
-	instructions.magic = 0x1337;
+	instructions.magic = 0xBEEF;
 	instructions.usermode_pid = processId;
 	instructions.module_name = moduleName;
 
-	Driver::callHook(&instructions);
+	Driver::call_hook(&instructions);
 
 	ULONG64 base = instructions.base_address;
 
 	return base;
-}
-
-std::string Memory::ReadString(uintptr_t address, size_t max_length) 
-{
-	std::string result;
-	for (size_t i = 0; i < max_length; ++i) {
-		char c = Read<char>(address + i);
-		if (c == '\0')
-			break;
-
-		result.push_back(c);
-	}
-	return result;
 }

@@ -14,25 +14,38 @@ void* Driver::kernel_control_function()
 	if (!hModule)
 		return nullptr;
 
+	/*
 	void* func = reinterpret_cast<void*>(Lazy::LI_GetProcAddress(hModule, (skCrypt("NtSetCompositionSurfaceAnalogExclusive"))));
 
 	*(PVOID*)&FunctionPTR = Lazy::LI_GetProcAddress(
 		Lazy::LI_GetModuleHandleA(skCrypt("win32u.dll")),
 		skCrypt("NtSetCompositionSurfaceAnalogExclusive")
 	);
+	*/
 
-	return func;
+	auto NtUserCreateWindowStation = (NtUserCreateWindowStation_t)Lazy::LI_GetProcAddress(
+		Lazy::LI_GetModuleHandleA(skCrypt("win32u.dll")),
+		skCrypt("NtUserCreateWindowStation")
+	);
+
+	FunctionPTR = NtUserCreateWindowStation;
+
+	return (void*)FunctionPTR;
 }
 
-PVOID Driver::callHook(MEMORY_STRUCT* instructions) 
+void Driver::resolve_gadget(uintptr_t kernel_routine)
+{
+	kernel_addr = reinterpret_cast<void*>(kernel_routine);
+}
+
+PVOID Driver::call_hook(MEMORY_STRUCT* instructions) 
 {
 	if (!FunctionPTR || !instructions)
 		return 0;
 
-	using tFunction = PVOID(__fastcall*)(PVOID, UINT, PVOID, UINT, PVOID);
-
-	// call function thru tFunction with arg[2] as our MEMORY_STRUCT* instructions
-	PVOID result = reinterpret_cast<tFunction>(FunctionPTR)(NULL, 0, static_cast<PVOID>(instructions), 0, NULL);
+	// call function thru NtUserCreateWindowStation_t a1 (RCX) as our MEMORY_STRUCT* instructions
+	void* comm = reinterpret_cast<void*>(instructions);
+	PVOID result = FunctionPTR((void*)0xAAAABBBBCCCCDDDD, 0xEEEEFFFFABCDEFFF, 1336, 444, 0xDEEBBEEBFEEFFAAF, comm, 0xABCD12EF, 888);
 
 	return result;
 }
