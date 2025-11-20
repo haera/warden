@@ -95,8 +95,9 @@
     </DriverSign>
     <ClCompile>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <LanguageStandard>Default</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <TreatWarningAsError>false</TreatWarningAsError>
+      <LanguageStandard_C>stdc17</LanguageStandard_C>
     </ClCompile>
     <ClCompile />
     <Link>

@@ -29,10 +29,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mem.hpp">
+    <ClInclude Include="imports.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="imports.hpp">
+    <ClInclude Include="mem.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

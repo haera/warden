@@ -2,19 +2,13 @@
 #include "imports.hpp"
 #include <cstdint>
 
-/*
-o_ApiSetEditionCreateWindowStationEntryPoint => qword_257F10
-	__int64 (__fastcall *qword_257F10)(_QWORD, _QWORD, _QWORD, _QWORD, _DWORD, _QWORD, _QWORD, _DWORD)
+INT64(__fastcall* o_ApiSetEditionCreateDesktopEntryPoint)(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6);
 
-hk_ApiSetEditionCreateWindowStationEntryPoint => swapped internal qword_257F10 dptr
-*/
-INT64(__fastcall* o_ApiSetEditionCreateWindowStationEntryPoint)(PVOID a1, ULONG a2, PVOID a3, ULONG a4, INT a5, PVOID comm, PVOID a7, INT a8);
-
-INT64 __fastcall hk_ApiSetEditionCreateWindowStationEntryPoint(PVOID a1, ULONG a2, PVOID a3, ULONG a4, INT a5, PVOID comm, PVOID a7, INT a8)
+INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6)
 {
 	if (ExGetPreviousMode() != UserMode)
 	{
-		return o_ApiSetEditionCreateWindowStationEntryPoint(a1, a2, a3, a4, a5, comm, a7, a8);
+		return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
 	}
 
 	if (comm)
@@ -26,7 +20,7 @@ INT64 __fastcall hk_ApiSetEditionCreateWindowStationEntryPoint(PVOID a1, ULONG a
 
 		if (m->magic != 0x1337 || !m->type)
 		{
-			return o_ApiSetEditionCreateWindowStationEntryPoint(a1, a2, a3, a4, a5, comm, a7, a8);
+			return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
 		}
 
 		if (m->type == 1)
@@ -43,19 +37,19 @@ INT64 __fastcall hk_ApiSetEditionCreateWindowStationEntryPoint(PVOID a1, ULONG a
 		}
 	}
 
-	return o_ApiSetEditionCreateWindowStationEntryPoint(a1, a2, a3, a4, a5, comm, a7, a8);
+	return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
 }
 
 
 /*
 	um: 
-		win32u.dll!NtUserCloseDesktop(&a1);
+		win32u.dll!NtUserCreateDesktopEx(&a1);
 	km: 
-		win32kbase!NtUserCreateWindowStation
-			-> win32kbase!ApiSetEditionCreateWindowStationEntryPoint (E8 ? ? ? ? 48 83 C4 48 C3 CC CC CC CC CC CC CC CC 48 8B C4 48 89 58 08 48 89 68 10)
+		win32kbase!NtUserCreateDesktopEx
+			-> win32kbase!ApiSetEditionCreateDesktopEntryPoint (78 3A 4C 8B 15 ?? ?? ?? ??)
 
-	- NtUserCreateWindowStation is exported so it will be used for usermode syscall.. it internally calls ApiSetEditionCreateWindowStationEntryPoint (not exported)
-	- ApiSetEditionCreateWindowStationEntryPoint's fptr (qword_257F10) will now redirect to JMP RCX
+	- NtUserCreateWindowStation is exported so it will be used for usermode syscall.. it internally calls ApiSetEditionCreateDesktopEntryPoint (not exported)
+	- ApiSetEditionCreateDesktopEntryPoint's fptr (qword_1C0257E40 on 22H2) will now redirect to "PUSH RCX; RET"
 */
 
 /*
@@ -192,9 +186,6 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	UNREFERENCED_PARAMETER(driver_object);
 	UNREFERENCED_PARAMETER(registry_path);
 
-	//Hook the function to NtSetCompositionSurfaceAnalogExclusive
-	//mem::Hook(&NtSetCompositionSurfaceAnalogExclusive);
-
 	HANDLE pid = (HANDLE)mem::FindProcessIdByName(L"explorer.exe");
 	if (!pid)
 	{
@@ -218,7 +209,7 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	}
 	DebugPrint("[+] win32kbase: 0x%p\n", win32kbase);
 
-	auto signature_addr = mem::sig_scan("E8 ? ? ? ? 48 83 C4 48 C3 CC CC CC CC CC CC CC CC 48 8B C4 48 89 58 08 48 89 68 10", (uintptr_t)win32kbase);
+	auto signature_addr = mem::sig_scan("78 3A 4C 8B 15 ?? ?? ?? ??", (uintptr_t)win32kbase);
 	if (!signature_addr)
 	{
 		DebugPrint("[X] could not find signature_addr\n");
@@ -227,9 +218,8 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	}
 	DebugPrint("[+] found signature_addr at 0x%p\n", signature_addr);
 
-	auto data_ptr = RVA(RVA(signature_addr, 5) + 0x60, 7);
+	auto data_ptr = RVA(signature_addr + 2, 7); // skip js 0x3C instruction (78 3A)
 	DebugPrint("[+] function_ptr = 0x%p\n", data_ptr);
-
 
 	// find our "push rcx; ret" gadget:
 	auto gadget_addr = mem::sig_scan("51 C3", (uintptr_t)win32kbase);
@@ -248,15 +238,30 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 		return oldPointer;
 	} // its the above but atomic. notice: uses xchg, could be flagged
 	*/
-	o_ApiSetEditionCreateWindowStationEntryPoint =
-		(INT64(__fastcall*)(PVOID, ULONG, PVOID, ULONG, INT, PVOID, PVOID, INT)) // template please
+	
+	o_ApiSetEditionCreateDesktopEntryPoint =
+		(INT64(__fastcall*)(PVOID, PVOID, PVOID, UINT, INT, INT)) // template please
 		_InterlockedExchangePointer(
 			(PVOID*)data_ptr, // *qword_257F10
-			(PVOID)hk_ApiSetEditionCreateWindowStationEntryPoint // bad naming convention, its really what was in qword_257F10
+			(PVOID)gadget_addr // addr of "push rcx; ret". better pray &hk_ApiSetEditionCreateDesktopEntryPoint is in kernel_routine (RCX) rn!
 		);
 
-	DebugPrint("[+] o_ApiSetEditionCreateWindowStationEntryPoint = 0x%p\n", o_ApiSetEditionCreateWindowStationEntryPoint);
-	DebugPrint("[+] hk_ApiSetEditionCreateWindowStationEntryPoint = 0x%p\n", hk_ApiSetEditionCreateWindowStationEntryPoint);
+	DebugPrint("[+] o_ApiSetEditionCreateDesktopEntryPoint = 0x%p\n", o_ApiSetEditionCreateDesktopEntryPoint);
+	DebugPrint("[+] hk_ApiSetEditionCreateDesktopEntryPoint = 0x%p\n", hk_ApiSetEditionCreateDesktopEntryPoint);
+
+	// write hk_ApiSetEditionCreateDesktopEntryPoint into registry path
+	INT64 p_kernel_routine = (INT64)hk_ApiSetEditionCreateDesktopEntryPoint;
+	NTSTATUS reg_write_status = RtlWriteRegistryValue(RTL_REGISTRY_ABSOLUTE,
+		L"\\Registry\\Machine\\SOFTWARE\\RegisteredApplications", L"Warden",
+		REG_BINARY, &p_kernel_routine, sizeof(p_kernel_routine)
+	);
+
+	if (!NT_SUCCESS(reg_write_status))
+	{
+		DebugPrint("[X] RtlWriteRegistryValue failed: = 0x%p\n", reg_write_status);
+		KeUnstackDetachProcess(&state);
+		return STATUS_FAILED_DRIVER_ENTRY;
+	}
 
 	/*
 	auto win32kfull = mem::get_system_module_base("win32kfull.sys");
@@ -278,11 +283,6 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	}
 	DebugPrint("[+] found gadget_addr at 0x%p\n", gadget_addr);
 	*/
-
-
-
-
-
 
 	KeUnstackDetachProcess(&state);
 

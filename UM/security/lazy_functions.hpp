@@ -32,6 +32,7 @@ namespace Lazy {
     inline auto LI_IsProcessorFeaturePresent = LI_FN(IsProcessorFeaturePresent);
     inline auto LI_LoadLibraryA = LI_FN(LoadLibraryA);
     inline auto LI_QueryPerformanceCounter = LI_FN(QueryPerformanceCounter);
+    inline auto LI_RegGetValueW = LI_FN(RegGetValueW);
     inline auto LI_RtlCaptureContext = LI_FN(RtlCaptureContext);
     inline auto LI_SetConsoleTitleA = LI_FN(SetConsoleTitleA);
     inline auto LI_SetUnhandledExceptionFilter = LI_FN(SetUnhandledExceptionFilter);

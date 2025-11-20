@@ -2,40 +2,34 @@
 #include "../security/crypt.hpp"
 #include "../security/lazy_functions.hpp"
 
-//PVOID(__fastcall* FunctionPTR)(PVOID a1, unsigned int a2, PVOID a3, unsigned int a4, PVOID a5) = nullptr;
-
-// essentially NtSetCompositionSurfaceAnalogExclusive(v1, v2, v3, ...)
 void* Driver::kernel_control_function()
 {
 	// win32u.dll is a link for System calls between UM and KM
 	HMODULE hModule = Lazy::LI_LoadLibraryA((skCrypt("win32u.dll")));
 
-
 	if (!hModule)
 		return nullptr;
 
-	/*
-	void* func = reinterpret_cast<void*>(Lazy::LI_GetProcAddress(hModule, (skCrypt("NtSetCompositionSurfaceAnalogExclusive"))));
-
-	*(PVOID*)&FunctionPTR = Lazy::LI_GetProcAddress(
+	auto NtUserCreateDesktopEx = (NtUserCreateDesktopEx_t)Lazy::LI_GetProcAddress(
 		Lazy::LI_GetModuleHandleA(skCrypt("win32u.dll")),
-		skCrypt("NtSetCompositionSurfaceAnalogExclusive")
-	);
-	*/
-
-	auto NtUserCreateWindowStation = (NtUserCreateWindowStation_t)Lazy::LI_GetProcAddress(
-		Lazy::LI_GetModuleHandleA(skCrypt("win32u.dll")),
-		skCrypt("NtUserCreateWindowStation")
+		skCrypt("NtUserCreateDesktopEx")
 	);
 
-	FunctionPTR = NtUserCreateWindowStation;
+	FunctionPTR = NtUserCreateDesktopEx;
 
 	return (void*)FunctionPTR;
 }
 
-void Driver::resolve_gadget(uintptr_t kernel_routine)
+bool Driver::load_kernel_addr()
 {
-	kernel_addr = reinterpret_cast<void*>(kernel_routine);
+	DWORD size = sizeof(kernel_addr);
+	auto st = Lazy::LI_RegGetValueW(HKEY_LOCAL_MACHINE, 
+		L"SOFTWARE\\RegisteredApplications", L"Warden", 
+		RRF_RT_REG_BINARY, nullptr, &kernel_addr, &size
+	);
+
+	// this code is hilarious to me
+	return st == ERROR_SUCCESS;
 }
 
 PVOID Driver::call_hook(MEMORY_STRUCT* instructions) 
@@ -43,9 +37,14 @@ PVOID Driver::call_hook(MEMORY_STRUCT* instructions)
 	if (!FunctionPTR || !instructions)
 		return 0;
 
-	// call function thru NtUserCreateWindowStation_t a1 (RCX) as our MEMORY_STRUCT* instructions
-	void* comm = reinterpret_cast<void*>(instructions);
-	PVOID result = FunctionPTR((void*)0xAAAABBBBCCCCDDDD, 0xEEEEFFFFABCDEFFF, 1336, 444, 0xDEEBBEEBFEEFFAAF, comm, 0xABCD12EF, 888);
+	/* 
+	calls func via the simple rop below::
+		- NtUserCreateDesktopEx_t a2(RDX) as our MEMORY_STRUCT* instructions
+		- a1(RCX) as our kernel routine addr used in "push rcx; ret" gadget
+	*/
+	void *comm = reinterpret_cast<void*>(instructions);
+	void *kernel_routine = reinterpret_cast<void*>(kernel_addr);
+	PVOID result = FunctionPTR(kernel_routine, comm, (void*)0x9687777773333211, 444, 0xDEEBBEEBFEEFFAAF, 0xABCD12EF);
 
 	return result;
 }
