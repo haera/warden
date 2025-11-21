@@ -2,6 +2,13 @@
 #include "imports.hpp"
 #include <cstdint>
 
+#define FAIL_AND_CLEAN(msg)       \
+    do {                          \
+        DebugPrint("[X] " msg "\n");   \
+        status = STATUS_FAILED_DRIVER_ENTRY; \
+        goto cleanup;             \
+    } while (0)	
+
 INT64(__fastcall* o_ApiSetEditionCreateDesktopEntryPoint)(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6);
 
 INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6)
@@ -15,8 +22,6 @@ INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, P
 	{
 
 		MEMORY_STRUCT* m = (MEMORY_STRUCT*)comm;
-
-		DebugPrint("[+] greetings.");
 
 		if (m->magic != 0x1337 || !m->type)
 		{
@@ -39,7 +44,6 @@ INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, P
 
 	return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
 }
-
 
 /*
 	um: 
@@ -186,50 +190,45 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	UNREFERENCED_PARAMETER(driver_object);
 	UNREFERENCED_PARAMETER(registry_path);
 
-	HANDLE pid = (HANDLE)mem::FindProcessIdByName(L"explorer.exe");
+	NTSTATUS   status   = STATUS_FAILED_DRIVER_ENTRY;
+	PEPROCESS  process  = nullptr;
+	KAPC_STATE apc_state{ 0 };
+	bool	   attached = false;
+
+	HANDLE pid = (HANDLE)mem::find_pid_by_name(L"explorer.exe");
 	if (!pid)
-	{
-		DebugPrint("[X] explorer not found\n");
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
+		FAIL_AND_CLEAN("[X] explorer not found\n");
+	
 	DebugPrint("[+] pid: %d\n", pid);
 
-	PEPROCESS process;
-	PsLookupProcessByProcessId(pid, &process);
+	NTSTATUS found_proc = PsLookupProcessByProcessId(pid, &process);
+	if (!NT_SUCCESS(found_proc))
+		FAIL_AND_CLEAN("[X] proc id lookup failed\n");
 
-	KAPC_STATE state;
-	KeStackAttachProcess(process, &state);
+	KeStackAttachProcess(process, &apc_state);
+	attached = true;
 
 	auto win32kbase = mem::get_system_module_base("win32kbase.sys");
 	if (!win32kbase)
-	{
-		DebugPrint("[X] win32kbase not found\n");	
-		KeUnstackDetachProcess(&state);
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
+		FAIL_AND_CLEAN("[X] win32kbase not found\n");
+
 	DebugPrint("[+] win32kbase: 0x%p\n", win32kbase);
 
 	auto signature_addr = mem::sig_scan("78 3A 4C 8B 15 ?? ?? ?? ??", (uintptr_t)win32kbase);
 	if (!signature_addr)
-	{
-		DebugPrint("[X] could not find signature_addr\n");
-		KeUnstackDetachProcess(&state);
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
+		FAIL_AND_CLEAN("[X] could not find signature_addr\n");
+
 	DebugPrint("[+] found signature_addr at 0x%p\n", signature_addr);
 
 	auto data_ptr = RVA(signature_addr + 2, 7); // skip js 0x3C instruction (78 3A)
 	DebugPrint("[+] function_ptr = 0x%p\n", data_ptr);
 
 	// find our "push rcx; ret" gadget:
-	auto gadget_addr = mem::sig_scan("51 C3", (uintptr_t)win32kbase);
-	if (!gadget_addr)
-	{
-		DebugPrint("[X] could not find gadget_addr\n");
-		KeUnstackDetachProcess(&state);
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
-	DebugPrint("[+] found gadget_addr at 0x%p\n", gadget_addr);
+	auto rcx_gadget_addr = mem::sig_scan("51 C3", (uintptr_t)win32kbase);
+	if (!rcx_gadget_addr)
+		FAIL_AND_CLEAN("[X] could not find rcx_gadget_addr\n");
+	
+	DebugPrint("[+] found rcx_gadget_addr at 0x%p\n", rcx_gadget_addr);
 
 	/*
 	void* InterlockedExchangePointer(void** Target, void* Source) {
@@ -238,41 +237,31 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 		return oldPointer;
 	} // its the above but atomic. notice: uses xchg, could be flagged
 	*/
-	
 	o_ApiSetEditionCreateDesktopEntryPoint =
 		(INT64(__fastcall*)(PVOID, PVOID, PVOID, UINT, INT, INT)) // template please
 		_InterlockedExchangePointer(
 			(PVOID*)data_ptr, // *qword_257F10
-			(PVOID)gadget_addr // addr of "push rcx; ret". better pray &hk_ApiSetEditionCreateDesktopEntryPoint is in kernel_routine (RCX) rn!
+			(PVOID)rcx_gadget_addr // addr of "push rcx; ret". better pray &hk_ApiSetEditionCreateDesktopEntryPoint is in kernel_routine (RCX) rn!
 		);
 
-	DebugPrint("[+] o_ApiSetEditionCreateDesktopEntryPoint = 0x%p\n", o_ApiSetEditionCreateDesktopEntryPoint);
-	DebugPrint("[+] hk_ApiSetEditionCreateDesktopEntryPoint = 0x%p\n", hk_ApiSetEditionCreateDesktopEntryPoint);
+	DebugPrint("[+] original entrypoint: 0x%p\n", o_ApiSetEditionCreateDesktopEntryPoint);
+	DebugPrint("[+] kernel routine: 0x%p\n", hk_ApiSetEditionCreateDesktopEntryPoint);
 
 	// write hk_ApiSetEditionCreateDesktopEntryPoint into registry path
-	INT64 p_kernel_routine = (INT64)hk_ApiSetEditionCreateDesktopEntryPoint;
-	NTSTATUS reg_write_status = RtlWriteRegistryValue(RTL_REGISTRY_ABSOLUTE,
-		L"\\Registry\\Machine\\SOFTWARE\\RegisteredApplications", L"Warden",
-		REG_BINARY, &p_kernel_routine, sizeof(p_kernel_routine)
+	INT64 kernel_routine_ptr = (INT64)hk_ApiSetEditionCreateDesktopEntryPoint;
+	NTSTATUS reg_write_status = RtlWriteRegistryValue(
+		RTL_REGISTRY_ABSOLUTE,
+		L"\\Registry\\Machine\\SOFTWARE\\RegisteredApplications", 
+		L"Warden",
+		REG_BINARY,
+		&kernel_routine_ptr, 
+		sizeof(kernel_routine_ptr)
 	);
 
 	if (!NT_SUCCESS(reg_write_status))
-	{
-		DebugPrint("[X] RtlWriteRegistryValue failed: = 0x%p\n", reg_write_status);
-		KeUnstackDetachProcess(&state);
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
+		FAIL_AND_CLEAN("[X] RtlWriteRegistryValue failed: = 0x%p\n", reg_write_status);
 
 	/*
-	auto win32kfull = mem::get_system_module_base("win32kfull.sys");
-	if (!win32kfull)
-	{
-		DebugPrint("[X] win32kfull not found\n");
-		KeUnstackDetachProcess(&state);
-		return STATUS_FAILED_DRIVER_ENTRY;
-	}
-	DebugPrint("[+] win32kfull: 0x%p\n", win32kfull);
-	
 	// JMP RCX
 	auto gadget_addr = mem::sig_scan("FF E1", (uintptr_t)win32kfull);
 	if (!gadget_addr)
@@ -284,8 +273,12 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	DebugPrint("[+] found gadget_addr at 0x%p\n", gadget_addr);
 	*/
 
-	KeUnstackDetachProcess(&state);
-
+	status = STATUS_SUCCESS;
 	DebugPrint("HOOKED\n");
-	return STATUS_SUCCESS;
+
+cleanup:
+	if (attached)
+		KeUnstackDetachProcess(&apc_state);
+
+	return status;
 }

@@ -50,13 +50,15 @@ void Load()
 	m_driver_control = Driver::call_hook(comm);
 
 	if (comm)
-		printf("comm->output: %x", comm->output);
+		info("comm->output: %x", comm->output);
+
+	delete comm;
 }
 
 int main() 
 {
 	info("warden loading...");
-
+	
 	Initialize();
 
 	Load();

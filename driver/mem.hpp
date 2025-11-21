@@ -165,7 +165,7 @@ namespace mem
 	}
 
 	// https://www.vergiliusproject.com/kernels/x64/Windows%2010%20%7C%202016/2110%2021H2%20(November%202021%20Update)/_EPROCESS
-	ULONG64 FindProcessIdByName(const wchar_t* process_name)
+	ULONG64 find_pid_by_name(const wchar_t* process_name)
 	{
 		if (process_name == NULL)
 			return 0;
