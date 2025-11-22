@@ -2,9 +2,22 @@
 #include "imports.hpp"
 
 #define RVA(addr, size) ((PBYTE)(addr + *(DWORD*)(addr + ((size) - 4)) + size))
+#define to_lower(c_char) ((c_char >= 'A' && c_char <= 'Z') ? (c_char + 32) : c_char)
 
 namespace mem
 {
+	inline PVOID ret_addr_stub_enc = 0;
+	extern "C" void* _spoofer_stub();
+	template<typename Ret = void, typename First = void*, typename Second = void*, typename Third = void*, typename Fourth = void*, typename... Stack>
+	__forceinline Ret spoof_call(void* Func, First a1 = First{}, Second a2 = Second{}, Third a3 = Third{}, Fourth a4 = Fourth{}, Stack... args)
+	{
+		struct shell_params { const void* a1; void* a2; void* a3; };
+		shell_params call_ctx = { ret_addr_stub_enc, Func, nullptr };
+		typedef Ret(*ShellFn)(First, Second, Third, Fourth, PVOID, PVOID, Stack...);
+		return ((ShellFn)&mem::_spoofer_stub)(a1, a2, a3, a4, &call_ctx, nullptr, args...);
+	}
+	__forceinline void set_spoof_stub(PVOID R15_Stub) { ret_addr_stub_enc = R15_Stub; }
+
 	uintptr_t get_system_module_base(const char* module_name)
 	{
 		ULONG size = 0;
@@ -69,45 +82,7 @@ namespace mem
 		return true;
 	}
 
-	bool Hook(void* destination)
-	{
-		if (!destination) return false;
-
-		PVOID* dxgk_routine = reinterpret_cast<PVOID*>(mem::GetSystemBaseModuleExport("\\SystemRoot\\System32\\drivers\\dxgkrnl.sys", "NtSetCompositionSurfaceAnalogExclusive"));
-		if (!dxgk_routine) return false;
-
-		BYTE orignal_shell_code[] = {
-		0x90,										// nop
-		0x90,										// nop 
-		0x90,										// nop
-		0x48, 0xB8,									// mov rax, 
-		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,		// [xxx]
-		0x90,										// nop
-		0x90,										// nop
-		0x48, 0xB8,									// mov rax, 
-		0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,		// [xxx]
-		0xFF, 0xE0,									// jmp rax // d0 for call
-		0xCC,										//int3									
-
-		};
-
-		BYTE start[]{ 0x48, 0xB8 }; // mov rax,
-		BYTE end[]{ 0xFF, 0xE0, 0xCC }; // jmp rax
-
-		RtlSecureZeroMemory(&orignal_shell_code, sizeof(orignal_shell_code));
-
-		memcpy((PVOID)((ULONG_PTR)orignal_shell_code), &start, sizeof(start));
-
-		uintptr_t test_address = reinterpret_cast<uintptr_t>(destination);
-
-		memcpy((PVOID)((ULONG_PTR)orignal_shell_code + sizeof(start)), &test_address, sizeof(void*));
-		memcpy((PVOID)((ULONG_PTR)orignal_shell_code + sizeof(start) + sizeof(void*)), &end, sizeof(end));
-
-		WriteToReadOnlyMemory(dxgk_routine, &orignal_shell_code, sizeof(orignal_shell_code));
-
-		return true;
-	}
-
+	
 	ULONG64 GetModuleBaseFor64BitProcess(PEPROCESS proc, UNICODE_STRING module_name)
 	{
 		PPEB pPeb = PsGetProcessPeb(proc);
@@ -149,7 +124,6 @@ namespace mem
 			return false;
 
 		wchar_t c1, c2;
-#define to_lower(c_char) ((c_char >= 'A' && c_char <= 'Z') ? (c_char + 32) : c_char)
 		
 		do
 		{

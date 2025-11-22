@@ -110,7 +110,7 @@
     </DriverSign>
     <ClCompile>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <LanguageStandard>Default</LanguageStandard>
+      <LanguageStandard>stdcpp17</LanguageStandard>
       <TreatWarningAsError>false</TreatWarningAsError>
     </ClCompile>
     <ClCompile />
@@ -141,6 +141,9 @@
   <ItemGroup>
     <ClInclude Include="imports.hpp" />
     <ClInclude Include="mem.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="spoof_call.asm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

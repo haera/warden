@@ -4,6 +4,7 @@
 #include <ntddk.h>
 #include <windef.h>
 #include <ntstrsafe.h>
+#include <stdint.h>
 
 #define ImageFileName 0x5A8 // EPROCESS::ImageFileName
 #define ActiveThreads 0x5F0 // EPROCESS::ActiveThreads

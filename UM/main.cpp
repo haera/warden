@@ -42,17 +42,21 @@ void Initialize()
 
 void Load()
 {
-	MEMORY_STRUCT* comm = new MEMORY_STRUCT{ 0 };
-	comm->type = 1;
-	comm->magic = 0x1337;
-	comm->usermode_pid = Lazy::LI_GetCurrentProcessId();
+	for (int i = 0; i < 30; ++i) {
+		MEMORY_STRUCT* comm = new MEMORY_STRUCT{ 0 };
+		comm->type = 1;
+		comm->magic = 0x1337;
+		comm->usermode_pid = Lazy::LI_GetCurrentProcessId();
 
-	m_driver_control = Driver::call_hook(comm);
+		m_driver_control = Driver::call_hook(comm);
 
-	if (comm)
-		info("comm->output: %x", comm->output);
+		if (comm)
+			info("comm->output: %x", comm->output);
 
-	delete comm;
+		delete comm;
+
+		Sleep(1000);
+	}
 }
 
 int main() 
