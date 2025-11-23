@@ -9,13 +9,13 @@
         goto cleanup;		            \
     } while (0)	
 
-INT64(__fastcall* o_ApiSetEditionCreateDesktopEntryPoint)(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6);
+INT64(__fastcall* o_NtUserLoadKeyboardLayoutEx)(PVOID a1, UINT a2, PVOID comm, PVOID a4, PVOID a5, PVOID a6, INT a7, INT a8);
 
-INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6)
+INT64 __fastcall hk_NtUserLoadKeyboardLayoutEx(PVOID a1, UINT a2, PVOID comm, PVOID a4, PVOID a5, PVOID a6, INT a7, INT a8)
 {
 	if (ExGetPreviousMode() != UserMode)
 	{
-		return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
+		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
 	}
 
 	if (comm)
@@ -23,9 +23,9 @@ INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, P
 
 		MEMORY_STRUCT* m = (MEMORY_STRUCT*)comm;
 
-		if (m->magic != 0x1337 || !m->type)
+		if (m->magic != 0xBEEF || !m->type)
 		{
-			return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
+			return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
 		}
 
 		if (m->type == 1)
@@ -43,31 +43,26 @@ INT64 __fastcall hk_ApiSetEditionCreateDesktopEntryPoint(PVOID a1, PVOID comm, P
 		}
 	}
 
-	return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
+	return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
 }
 
 /*
 	um: 
-		win32u.dll!NtUserCreateDesktopEx(&a1);
+		win32u.dll!NtUserLoadKeyboardLayoutEx(&a1);
 	km: 
-		win32kbase!NtUserCreateDesktopEx
-			-> win32kbase!ApiSetEditionCreateDesktopEntryPoint (78 3A 4C 8B 15 ?? ?? ?? ??)
+		win32k!NtUserLoadKeyboardLayoutEx (
 
-	- NtUserCreateWindowStation is exported so it will be used for usermode syscall.. it internally calls ApiSetEditionCreateDesktopEntryPoint (not exported)
-	- ApiSetEditionCreateDesktopEntryPoint's fptr (qword_1C0257E40 on 22H2) will now redirect to "PUSH RCX; RET"
+	- NtUserLoadKeyboardLayoutEx is exported so it will be used for usermode syscall.. it internally calls NtUserLoadKeyboardLayoutEx from win32kbase (not exported)
+	- NtUserLoadKeyboardLayoutEx's fptr (something qword_??? in win32kbase on 22H2) will now redirect to "PUSH RCX; RET"
 */
 
-__int64 __fastcall hook_proxy(PVOID a1, PVOID comm, PVOID a3, UINT a4, INT a5, INT a6)
+__int64 __fastcall hook_proxy(PVOID a1, UINT a2, PVOID comm, PVOID a4, PVOID a5, PVOID a6, INT a7, INT a8)
 {
-	if (!comm)
-		return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
-
 	MEMORY_STRUCT* m = (MEMORY_STRUCT*)comm;
+	if (!m || m->magic != 0xBEEF)
+		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
 
-	if (m->magic != 0x1337)
-		return o_ApiSetEditionCreateDesktopEntryPoint(a1, comm, a3, a4, a5, a6);
-
-	mem::spoof_call(hk_ApiSetEditionCreateDesktopEntryPoint, a1, comm, a3, a4, a5, a6);
+	mem::spoof_call(hk_NtUserLoadKeyboardLayoutEx, a1, a2, comm, a4, a5, a6, a7, a8);
 
 	return 0;
 }
@@ -93,19 +88,26 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 	KeStackAttachProcess(process, &apc_state);
 	attached = true;
 
+	
+	auto win32k = mem::get_system_module_base("win32k.sys");
+	if (!win32k)
+		FAIL_AND_CLEAN("[X] win32k not found\n");
+
+	DebugPrint("[+] win32k: 0x%p\n", win32k);
+
 	auto win32kbase = mem::get_system_module_base("win32kbase.sys");
 	if (!win32kbase)
 		FAIL_AND_CLEAN("[X] win32kbase not found\n");
 
 	DebugPrint("[+] win32kbase: 0x%p\n", win32kbase);
 
-	auto signature_addr = mem::sig_scan("78 3A 4C 8B 15 ?? ?? ?? ??", (uintptr_t)win32kbase);
+	auto signature_addr = mem::sig_scan("48 8B 05 4B D7 05 00", (uintptr_t)win32k);
 	if (!signature_addr)
 		FAIL_AND_CLEAN("[X] could not find signature_addr\n");
 
 	DebugPrint("[+] found signature_addr at 0x%p\n", signature_addr);
 
-	auto data_ptr = RVA(signature_addr + 2, 7); // skip js 0x3C instruction (78 3A)
+	auto data_ptr = RVA(signature_addr, 7);
 	DebugPrint("[+] function_ptr = 0x%p\n", data_ptr);
 
 	// find our "push rcx; ret" gadget:
@@ -131,17 +133,17 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 		return oldPointer;
 	} // its the above but atomic. notice: uses xchg, could be flagged
 	*/
-	o_ApiSetEditionCreateDesktopEntryPoint =
-		(INT64(__fastcall*)(PVOID, PVOID, PVOID, UINT, INT, INT)) // template please
+	*(void**)&o_NtUserLoadKeyboardLayoutEx =
+		(INT64(__fastcall*)(PVOID, UINT, PVOID, PVOID, PVOID, PVOID, INT, INT)) // template please
 		_InterlockedExchangePointer(
-			(PVOID*)data_ptr, // *qword_257F10
+			(PVOID*)data_ptr, // *qword_??????
 			(PVOID)push_rcx_ret_gadget // addr of "push rcx; ret". better pray &hook_proxy is in kernel_routine (RCX) rn!
 		);
 
-	DebugPrint("[+] original entrypoint: 0x%p\n", o_ApiSetEditionCreateDesktopEntryPoint);
-	DebugPrint("[+] kernel routine: 0x%p\n", hk_ApiSetEditionCreateDesktopEntryPoint);
+	DebugPrint("[+] original entrypoint: 0x%p\n", o_NtUserLoadKeyboardLayoutEx);
+	DebugPrint("[+] hook: 0x%p\n", hk_NtUserLoadKeyboardLayoutEx);
 
-	DebugPrint("XYZ: hello from bottom of driver_entry! return address: 0x%p\n", _ReturnAddress());
+	DebugPrint("[+] hook_proxy: 0x%p\n", hook_proxy);
 
 	// write hook_proxy into registry path
 	INT64 kernel_routine_ptr = (INT64)hook_proxy;

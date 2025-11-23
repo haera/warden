@@ -2,9 +2,8 @@
 #include <Windows.h>
 #include <cstdint>
 
-//inline PVOID(__fastcall* FunctionPTR)(PVOID a1, unsigned int a2, PVOID a3, unsigned int a4, PVOID a5);
-using NtUserCreateDesktopEx_t = PVOID(__fastcall*)(void* a1, void* a2, void* a3, unsigned int a4, int a5, int a6);
-inline NtUserCreateDesktopEx_t FunctionPTR;
+using NtUserLoadKeyboardLayoutEx_t = PVOID(__fastcall*)(void* a1, unsigned int a2, void* a3, void* a4, void* a5, void* a6, int a7, int a8);
+inline NtUserLoadKeyboardLayoutEx_t FunctionPTR;
 inline uint64_t kernel_addr;
 
 typedef struct _MEMORY_STRUCT

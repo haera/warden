@@ -45,8 +45,8 @@ void Load()
 	for (int i = 0; i < 30; ++i) {
 		MEMORY_STRUCT* comm = new MEMORY_STRUCT{ 0 };
 		comm->type = 1;
-		comm->magic = 0x1337;
-		comm->usermode_pid = Lazy::LI_GetCurrentProcessId();
+		comm->magic = 0xBEEF;
+		comm->usermode_pid = GetCurrentProcessId();
 
 		m_driver_control = Driver::call_hook(comm);
 
