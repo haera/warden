@@ -42,7 +42,8 @@ void Initialize()
 
 void Load()
 {
-	for (int i = 0; i < 30; ++i) {
+	/*
+	for (int i = 0; i < 3; ++i) {
 		MEMORY_STRUCT* comm = new MEMORY_STRUCT{ 0 };
 		comm->type = 1;
 		comm->magic = 0xBEEF;
@@ -57,6 +58,17 @@ void Load()
 
 		Sleep(1000);
 	}
+	*/
+
+	while (!mem->getProcessId(skCrypt("target_proc.exe")))
+		Sleep(10);
+
+	info("Found pid: %d", mem->processId);
+
+	if (!mem->getModuleBaseAddress(skCrypt("target_module.dll")))
+		Sleep(10);
+
+	info("Found moduleBase: %x", mem->moduleBase);
 }
 
 int main() 

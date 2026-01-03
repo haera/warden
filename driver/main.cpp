@@ -4,7 +4,7 @@
 
 #define FAIL_AND_CLEAN(msg)    			\
     do {					    	    \
-        DebugPrint("[X] " msg "\n");    \
+        DebugPrint(msg);    \
         status = STATUS_FAILED_DRIVER_ENTRY; \
         goto cleanup;		            \
     } while (0)	
@@ -14,36 +14,124 @@ INT64(__fastcall* o_NtUserLoadKeyboardLayoutEx)(PVOID a1, UINT a2, PVOID comm, P
 INT64 __fastcall hk_NtUserLoadKeyboardLayoutEx(PVOID a1, UINT a2, PVOID comm, PVOID a4, PVOID a5, PVOID a6, INT a7, INT a8)
 {
 	if (ExGetPreviousMode() != UserMode)
+		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
+
+	if (!comm)
+		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
+
+	MEMORY_STRUCT* m = (MEMORY_STRUCT*)comm;
+
+	if (m->magic != 0xBEEF || !m->type)
+		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
+
+	INT64 result = -1;
+
+	if (m->type == 1)
+	{
+		// simple check if driver is communicating
+		PEPROCESS usermode_process;
+		if (NT_SUCCESS(mem::spoof_call<NTSTATUS>(PsLookupProcessByProcessId, (HANDLE)m->usermode_pid, &usermode_process)))
+		{
+			m->output = (void*)0x9999;
+			DebugPrint("[+] m->type 1 comm check: %x, um pid: %ld\n", m->output, m->usermode_pid);
+			DebugPrint("XYZ: hello from hook! return address: 0x%p\n", _ReturnAddress());
+		}
+
+		return 9999;
+	}
+	else if (m->type == 3)
+	{
+		//Read process memory
+		if (!m->address || !m->size || !m->usermode_pid || !m->target_pid)
+			return STATUS_NOT_SUPPORTED;
+
+		PEPROCESS usermode_process;
+		if (NT_SUCCESS(mem::spoof_call<NTSTATUS>(PsLookupProcessByProcessId, (HANDLE)m->usermode_pid, &usermode_process)))
+		{
+			PEPROCESS target_process;
+			if (NT_SUCCESS(mem::spoof_call<NTSTATUS>(PsLookupProcessByProcessId, (HANDLE)m->target_pid, &target_process)))
+			{
+				SIZE_T bytes = 0;
+				NTSTATUS x = mem::spoof_call<NTSTATUS>(MmCopyVirtualMemory, target_process, m->address, usermode_process, m->output, m->size, UserMode, &bytes);
+				//DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, "hiiiii");
+				mem::spoof_call<NTSTATUS>(ObfDereferenceObject, target_process);
+
+				if (NT_SUCCESS(x))
+					result = 0;
+				else
+					result = 1;
+			}
+			else result = 2;
+
+			mem::spoof_call<NTSTATUS>(ObfDereferenceObject, usermode_process);
+		}
+		else result = 3;
+	}
+	else if (m->type == 4)
+	{
+		//Write process memory
+		if (!m->address || !m->size || !m->output || !m->usermode_pid || !m->target_pid)
+			return STATUS_NOT_SUPPORTED;
+
+		PEPROCESS usermode_process;
+		if (NT_SUCCESS(mem::spoof_call<NTSTATUS>(PsLookupProcessByProcessId, (HANDLE)m->usermode_pid, &usermode_process)))
+		{
+			PEPROCESS target_process;
+			if (NT_SUCCESS(mem::spoof_call<NTSTATUS>(PsLookupProcessByProcessId, (HANDLE)m->target_pid, &target_process)))
+			{
+				SIZE_T bytes = 0;
+
+				NTSTATUS x = mem::spoof_call<NTSTATUS>(MmCopyVirtualMemory, usermode_process, m->output, target_process, m->address, m->size, UserMode, &bytes);
+				mem::spoof_call<NTSTATUS>(ObfDereferenceObject, target_process);
+
+				if (NT_SUCCESS(x))
+					result = 0;
+				else
+					result = 1;
+			}
+			else result = 2;
+			mem::spoof_call<NTSTATUS>(ObfDereferenceObject, usermode_process);
+		}
+		else result = 3;
+	}
+	else if (m->type == 5) {
+		ANSI_STRING x;
+		UNICODE_STRING process_name;
+		// we're using module_name in lieu of the process_name for now
+		mem::spoof_call(RtlInitAnsiString, &x, m->module_name);
+		mem::spoof_call(RtlAnsiStringToUnicodeString, &process_name, &x, TRUE);
+
+		ULONG64 processId = 0;
+		processId = mem::FindProcessIdByName(process_name.Buffer);
+		// same with base_address... figure out smarter serialization pls
+		m->base_address = processId;
+
+		result = 0;
+	}
+	else if (m->type == 6)
+	{
+		ANSI_STRING x;
+		UNICODE_STRING module;
+		mem::spoof_call(RtlInitAnsiString, &x, m->module_name);
+		mem::spoof_call(RtlAnsiStringToUnicodeString, &module, &x, TRUE);
+		PEPROCESS usermode;
+		mem::spoof_call(PsLookupProcessByProcessId, (HANDLE)m->usermode_pid, &usermode);
+		// may need to impol NT_SUCCESS here
+
+		ULONG64 base_address = NULL;
+		base_address = mem::GetModuleBaseFor64BitProcess(usermode, module);
+		m->base_address = base_address;
+		mem::spoof_call(ObfDereferenceObject, usermode);
+		mem::spoof_call(RtlFreeUnicodeString, &module);
+
+		result = 0;
+	}
+	else
 	{
 		return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
 	}
 
-	if (comm)
-	{
-
-		MEMORY_STRUCT* m = (MEMORY_STRUCT*)comm;
-
-		if (m->magic != 0xBEEF || !m->type)
-		{
-			return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
-		}
-
-		if (m->type == 1)
-		{
-			// simple check if driver is communicating
-			PEPROCESS usermode_process;
-			if (NT_SUCCESS(PsLookupProcessByProcessId((HANDLE)m->usermode_pid, &usermode_process)))
-			{
-				m->output = (void*)0x9999;
-				DebugPrint("[+] m->type 1 comm check: %x, um pid: %ld", m->output, m->usermode_pid);
-				DebugPrint("XYZ: hello from hook! return address: 0x%p\n", _ReturnAddress());
-			}
-
-			return 9999;
-		}
-	}
-
-	return o_NtUserLoadKeyboardLayoutEx(a1, a2, comm, a4, a5, a6, a7, a8);
+	return result;
 }
 
 /*
@@ -87,7 +175,6 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver_object, PUNICODE_STRING re
 
 	KeStackAttachProcess(process, &apc_state);
 	attached = true;
-
 	
 	auto win32k = mem::get_system_module_base("win32k.sys");
 	if (!win32k)

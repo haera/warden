@@ -48,72 +48,8 @@ namespace mem
 			}
 		}
 
-		ExFreePoolWithTag(buffer, 'ldmB');
+		ExFreePoolWithTag(buffer, 0);
 		return base;
-	}
-
-	PVOID GetSystemBaseModuleExport(const char* module_name, LPCSTR routine_name)
-	{
-		PVOID base_module = (PVOID)mem::get_system_module_base(module_name);
-		if (!base_module) return NULL;
-		return RtlFindExportedRoutineByName(base_module, routine_name);
-	}
-
-	bool WriteMemory(void* address, void* buffer, size_t size)
-	{
-		return RtlCopyMemory(address, buffer, size) != 0;
-	}
-
-	bool WriteToReadOnlyMemory(void* address, void* buffer, size_t size) {
-		PMDL Mdl = IoAllocateMdl(address, static_cast<ULONG>(size), FALSE, FALSE, NULL);
-
-		if (!Mdl) return false;
-
-		MmProbeAndLockPages(Mdl, KernelMode, IoReadAccess);
-		PVOID Mapping = MmMapLockedPagesSpecifyCache(Mdl, KernelMode, MmNonCached, NULL, FALSE, NormalPagePriority);
-		MmProtectMdlSystemAddress(Mdl, PAGE_READWRITE);
-
-		WriteMemory(Mapping, buffer, size);
-
-		MmUnmapLockedPages(Mapping, Mdl);
-		MmUnlockPages(Mdl);
-		IoFreeMdl(Mdl);
-
-		return true;
-	}
-
-	
-	ULONG64 GetModuleBaseFor64BitProcess(PEPROCESS proc, UNICODE_STRING module_name)
-	{
-		PPEB pPeb = PsGetProcessPeb(proc);
-		if (!pPeb) return 0;
-
-		KAPC_STATE state;
-
-		KeStackAttachProcess(proc, &state);
-
-		PPEB_LDR_DATA pLdr = (PPEB_LDR_DATA)pPeb->Ldr;
-
-		if (!pLdr)
-		{
-			KeUnstackDetachProcess(&state);
-			return 0;
-		}
-
-		for (PLIST_ENTRY list = (PLIST_ENTRY)pLdr->ModuleListLoadOrder.Flink; list != &pLdr->ModuleListLoadOrder; list = (PLIST_ENTRY)list->Flink)
-		{
-			PLDR_DATA_TABLE_ENTRY pEntry = CONTAINING_RECORD(list, LDR_DATA_TABLE_ENTRY, InLoadOrderModuleList);
-			if (RtlCompareUnicodeString(&pEntry->BaseDllName, &module_name, TRUE) == 0)
-			{
-				ULONG64 baseAddr = (ULONG64)pEntry->DllBase;
-				KeUnstackDetachProcess(&state);
-				return baseAddr;
-			}
-		}
-
-		KeUnstackDetachProcess(&state);
-
-		return 0;
 	}
 
 	// handles both narrow and wchar_t char strings -- winapi likes to return both ANSI and unicode
@@ -124,7 +60,7 @@ namespace mem
 			return false;
 
 		wchar_t c1, c2;
-		
+
 		do
 		{
 			c1 = *str++; c2 = *in_str++;
@@ -136,6 +72,102 @@ namespace mem
 		} while (c1 == c2);
 
 		return false;
+	}
+
+	BOOLEAN UnicodeStringContainsSubstring(PUNICODE_STRING haystack, PUNICODE_STRING needle)
+	{
+		if (!haystack || !needle || haystack->Length < needle->Length)
+			return FALSE;
+
+		USHORT hlen = haystack->Length / sizeof(WCHAR);
+		USHORT nlen = needle->Length / sizeof(WCHAR);
+
+		for (USHORT i = 0; i <= hlen - nlen; ++i)
+		{
+			if (RtlCompareMemory(
+				haystack->Buffer + i,
+				needle->Buffer,
+				needle->Length) == needle->Length
+				)
+			return TRUE;
+		}
+
+		return FALSE;
+	}
+
+	PVOID GetSystemBaseModuleExport(const char* module_name, LPCSTR routine_name)
+	{
+		PVOID base_module = spoof_call<PVOID>(mem::get_system_module_base, module_name);
+		if (!base_module) return NULL;
+		return spoof_call<PVOID>(RtlFindExportedRoutineByName, base_module, routine_name);
+	}
+
+	ULONG64 FindProcessIdByName(const wchar_t* process_name)
+	{
+		if (!process_name)
+			return 0;
+
+		UNICODE_STRING target_name;
+		spoof_call<NTSTATUS>(RtlInitUnicodeString, &target_name, process_name);
+
+		PEPROCESS process = nullptr;
+
+		for (uint64_t process_id = 4; process_id <= 60000; process_id++) {
+			if (!NT_SUCCESS(spoof_call<NTSTATUS>(PsLookupProcessByProcessId, ULongToHandle(process_id), &process)))
+				continue;
+			
+			PUNICODE_STRING image_name = { 0 }; 
+			if (!NT_SUCCESS(spoof_call<NTSTATUS>(SeLocateProcessImageName, process, &image_name)) || !image_name)
+				continue;
+
+			BOOLEAN match = UnicodeStringContainsSubstring(image_name, &target_name);
+			DebugPrint("does %wZ match? %d", image_name, match);
+
+			if (match)
+			{
+				DebugPrint("%llu", process_id);
+				return process_id;
+			}
+			
+			/*if (match)
+				return process_id;*/
+		}
+
+		return 0;
+	}
+
+	
+	ULONG64 GetModuleBaseFor64BitProcess(PEPROCESS proc, UNICODE_STRING module_name)
+	{
+		PPEB pPeb = spoof_call<PPEB>(PsGetProcessPeb, proc);
+		if (!pPeb) return 0;
+
+		KAPC_STATE state;
+
+		spoof_call(KeStackAttachProcess, proc, &state);
+
+		PPEB_LDR_DATA pLdr = (PPEB_LDR_DATA)pPeb->Ldr;
+
+		if (!pLdr)
+		{
+			spoof_call(KeUnstackDetachProcess, &state);
+			return 0;
+		}
+
+		for (PLIST_ENTRY list = (PLIST_ENTRY)pLdr->ModuleListLoadOrder.Flink; list != &pLdr->ModuleListLoadOrder; list = (PLIST_ENTRY)list->Flink)
+		{
+			PLDR_DATA_TABLE_ENTRY pEntry = CONTAINING_RECORD(list, LDR_DATA_TABLE_ENTRY, InLoadOrderModuleList);
+			if (spoof_call<LONG>(RtlCompareUnicodeString, &pEntry->BaseDllName, &module_name, TRUE) == 0)
+			{
+				ULONG64 baseAddr = (ULONG64)pEntry->DllBase;
+				spoof_call(KeUnstackDetachProcess, &state);
+				return baseAddr;
+			}
+		}
+
+		spoof_call(KeUnstackDetachProcess, &state);
+
+		return 0;
 	}
 
 	// https://www.vergiliusproject.com/kernels/x64/Windows%2010%20%7C%202016/2110%2021H2%20(November%202021%20Update)/_EPROCESS
